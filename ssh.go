@@ -5,7 +5,9 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
+	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -143,12 +145,12 @@ type ClientConfig struct {
 	Addr       string
 	User       string
 	Passwrod   string
-	PrivateKey string
+	PrivateKey []byte
 
 	authMethod []ssh.AuthMethod
 }
 
-func (conf *ClientConfig) init() {
+func (conf *ClientConfig) init() error {
 	if conf.User == "" {
 		conf.User = "root"
 	}
@@ -156,11 +158,36 @@ func (conf *ClientConfig) init() {
 		conf.authMethod = []ssh.AuthMethod{
 			ssh.Password(conf.Passwrod),
 		}
+	} else if len(conf.PrivateKey) == 0 {
+		var privatePath string
+		if runtime.GOOS == "windows" {
+			privatePath = os.Getenv("USERPROFILE") + "/.ssh/id_rsa"
+		} else if runtime.GOOS == "linux" {
+			privatePath = "~/.ssh/id_rsa"
+		}
+		pbs, err := ioutil.ReadFile(privatePath)
+		if err != nil {
+			return err
+		}
+		conf.PrivateKey = pbs
 	}
+	if len(conf.PrivateKey) > 0 {
+		method, err := ssh.ParsePrivateKey(conf.PrivateKey)
+		if err != nil {
+			return err
+		}
+		conf.authMethod = []ssh.AuthMethod{
+			ssh.PublicKeys(method),
+		}
+	}
+	return nil
 }
 
 func (conf *ClientConfig) parse() (*ssh.ClientConfig, error) {
-	conf.init()
+	err := conf.init()
+	if err != nil {
+		return nil, err
+	}
 	cf := &ssh.ClientConfig{
 		User: conf.User,
 		Auth: conf.authMethod,
