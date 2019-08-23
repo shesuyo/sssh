@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -86,11 +87,11 @@ func (r *Read) Read(p []byte) (n int, err error) {
 	}
 }
 
-type Client struct {
+type client struct {
 	*ssh.Client
 }
 
-func (c *Client) NewSession() (*Session, error) {
+func (c *client) newSession() (*Session, error) {
 	session, err := c.Client.NewSession()
 	// Set up terminal modes
 	modes := ssh.TerminalModes{
@@ -112,19 +113,22 @@ func (c *Client) NewSession() (*Session, error) {
 		return nil, err
 	}
 	<-w.done
-	return &Session{Session: session, w: w, r: r}, err
+	return &Session{client: c.Client, session: session, w: w, r: r}, err
 }
 
 type Session struct {
-	*ssh.Session
-	r *Read
-	w *Write
+	client  *ssh.Client
+	session *ssh.Session
+	r       *Read
+	w       *Write
 }
 
 func (s *Session) Send(command string) *Resp {
 	s.r.Send(command)
 	<-s.w.done
-
+	if len(s.w.commandResp) > 2 {
+		s.w.commandResp = s.w.commandResp[:len(s.w.commandResp)-2]
+	}
 	return &Resp{resp: s.w.commandResp}
 }
 
@@ -198,14 +202,22 @@ func (conf *ClientConfig) parse() (*ssh.ClientConfig, error) {
 	return cf, nil
 }
 
-func NewClient(conf *ClientConfig) (*Client, error) {
+func New(conf *ClientConfig) (*Session, error) {
 	sshConfig, err := conf.parse()
 	if err != nil {
 		return nil, err
 	}
-	client, err := ssh.Dial("tcp", conf.Addr, sshConfig)
+	sshClient, err := ssh.Dial("tcp", conf.Addr, sshConfig)
 	if err != nil {
 		return nil, err
 	}
-	return &Client{Client: client}, nil
+	session, err := (&client{sshClient}).newSession()
+	return session, err
+}
+
+func NewAddr(addr string) (*Session, error) {
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":22"
+	}
+	return New(&ClientConfig{Addr: addr})
 }
