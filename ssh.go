@@ -24,18 +24,18 @@ type Write struct {
 }
 
 func (w *Write) Write(p []byte) (n int, err error) {
+	// 一般一行是一个Write
 	if !w.isNewCommand {
 		w.isNewCommand = true
 		w.commandResp = make([]byte, 0, len(p))
 	}
-
 	if idx := reg.FindIndex(p); len(idx) > 0 {
 		// fmt.Println(":", string(p[idx[0]:idx[1]]))
+		w.commandResp = append(w.commandResp, bytes.Replace(p, p[idx[0]:idx[1]], []byte{}, 1)...)
+		w.isNewCommand = false
 		go func() {
 			w.done <- struct{}{}
 		}()
-		w.commandResp = append(w.commandResp, bytes.Replace(p, p[idx[0]:idx[1]], []byte{}, 1)...)
-		w.isNewCommand = false
 	} else {
 		w.commandResp = append(w.commandResp, p...)
 	}
@@ -72,6 +72,7 @@ func (r *Read) Read(p []byte) (n int, err error) {
 	select {
 	case line := <-r.lines:
 		{
+			// 自动回车执行
 			bs := []byte(line + "\n")
 			copy(p, bs)
 			return len(bs), nil
@@ -87,11 +88,11 @@ func (r *Read) Read(p []byte) (n int, err error) {
 	}
 }
 
-type client struct {
+type Client struct {
 	*ssh.Client
 }
 
-func (c *client) newSession() (*Session, error) {
+func (c *Client) NewSession() (*Session, error) {
 	session, err := c.Client.NewSession()
 	// Set up terminal modes
 	modes := ssh.TerminalModes{
@@ -100,7 +101,8 @@ func (c *client) newSession() (*Session, error) {
 		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
 	}
 	// Request pseudo terminal
-	if err := session.RequestPty("term", 40, 80, modes); err != nil {
+	// 如果宽度太低很多命令会被截取掉
+	if err := session.RequestPty("term", 72, 999, modes); err != nil {
 		return nil, err
 	}
 	r := NewRead()
@@ -127,9 +129,20 @@ func (s *Session) Send(command string) *Resp {
 	s.r.Send(command)
 	<-s.w.done
 	if len(s.w.commandResp) > 2 {
+		// fmt.Println("s.w.commandResp", string(s.w.commandResp))
 		s.w.commandResp = s.w.commandResp[:len(s.w.commandResp)-2]
 	}
 	return &Resp{resp: s.w.commandResp}
+}
+
+func (s *Session) Close() error {
+	s.r.Close()
+	s.session.Stdout = ioutil.Discard
+	return s.session.Close()
+}
+
+func (s *Session) CloseClient() error {
+	return s.client.Close()
 }
 
 type Resp struct {
@@ -202,7 +215,7 @@ func (conf *ClientConfig) parse() (*ssh.ClientConfig, error) {
 	return cf, nil
 }
 
-func New(conf *ClientConfig) (*Session, error) {
+func New(conf *ClientConfig) (*Client, error) {
 	sshConfig, err := conf.parse()
 	if err != nil {
 		return nil, err
@@ -211,11 +224,21 @@ func New(conf *ClientConfig) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	session, err := (&client{sshClient}).newSession()
-	return session, err
+	return &Client{sshClient}, err
 }
 
-func NewAddr(addr string) (*Session, error) {
+func NewSession(addr string) (*Session, error) {
+	if !strings.Contains(addr, ":") {
+		addr = addr + ":22"
+	}
+	client, err := New(&ClientConfig{Addr: addr})
+	if err != nil {
+		return nil, err
+	}
+	return client.NewSession()
+}
+
+func NewClient(addr string) (*Client, error) {
 	if !strings.Contains(addr, ":") {
 		addr = addr + ":22"
 	}
