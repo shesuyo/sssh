@@ -1,9 +1,8 @@
-package ssh
+package sssh
 
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"regexp"
@@ -109,7 +108,7 @@ func (c *Client) NewSession() (*Session, error) {
 	w := NewWrite()
 	session.Stdin = r
 	session.Stdout = w
-	session.Stderr = ioutil.Discard
+	session.Stderr = io.Discard
 	// Start remote shell
 	if err := session.Shell(); err != nil {
 		return nil, err
@@ -137,7 +136,7 @@ func (s *Session) Send(command string) *Resp {
 
 func (s *Session) Close() error {
 	s.r.Close()
-	s.session.Stdout = ioutil.Discard
+	s.session.Stdout = io.Discard
 	return s.session.Close()
 }
 
@@ -182,7 +181,7 @@ func (conf *ClientConfig) init() error {
 		} else if runtime.GOOS == "linux" {
 			privatePath = "~/.ssh/id_rsa"
 		}
-		pbs, err := ioutil.ReadFile(privatePath)
+		pbs, err := os.ReadFile(privatePath)
 		if err != nil {
 			return err
 		}
